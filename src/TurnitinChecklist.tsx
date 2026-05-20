@@ -39,6 +39,7 @@ interface TestResult {
   test_id: string;
   status: Status;
   notes: string;
+  test_title?: string;
   user_name: string;
   user_email: string;
   updated_at: string;
@@ -219,9 +220,6 @@ function TestRow({
   const [notes, setNotes] = useState(myResult?.notes ?? "");
   const [dirty, setDirty] = useState(false);
 
-  useEffect(() => {
-    if (myResult) { setStatus(myResult.status); setNotes(myResult.notes ?? ""); setDirty(false); }
-  }, [myResult]);
 
   const otherTesters = allResults.filter((r) => r.status !== "untested");
 
@@ -380,8 +378,9 @@ function AdminView({ onBack }: { onBack: () => void }) {
                     <div key={r.test_id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0", borderBottom: "1px solid #0f172a" }}>
                       <StatusBadge status={r.status} />
                       <div style={{ flex: 1 }}>
-                        <span style={{ fontSize: 13, color: "#cbd5e1", fontFamily: "'DM Sans', sans-serif" }}>{r.test_title}</span>
-                        {r.notes && <p style={{ margin: "2px 0 0", fontSize: 11, color: "#475569", fontStyle: "italic", fontFamily: "'DM Sans', sans-serif" }}>{r.notes}</p>}
+                        <span style={{ fontSize: 13, color: "#cbd5e1", fontFamily: "'DM Sans', sans-serif" }}>
+                          {r.test_title}
+                        </span>                        {r.notes && <p style={{ margin: "2px 0 0", fontSize: 11, color: "#475569", fontStyle: "italic", fontFamily: "'DM Sans', sans-serif" }}>{r.notes}</p>}
                       </div>
                       <span style={{ fontSize: 11, color: "#334155", flexShrink: 0 }}>{new Date(r.updated_at).toLocaleDateString()}</span>
                     </div>
