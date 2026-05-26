@@ -1,271 +1,600 @@
 /**
- * Turnitin LTI 1.3 QA Checklist
+ * Dynamic QA Checklist — Full App
  *
  * Setup:
- *  1. Run supabase_schema.sql in your Supabase SQL Editor
- *  2. Create a .env file (or Vercel env vars):
- *       VITE_SUPABASE_URL=https://xxxx.supabase.co
- *       VITE_SUPABASE_ANON_KEY=your-anon-key
- *  3. npm install @supabase/supabase-js
+ *   npm install @supabase/supabase-js xlsx
+ *
+ * Vercel env vars:
+ *   VITE_SUPABASE_URL=https://xxxx.supabase.co
+ *   VITE_SUPABASE_ANON_KEY=your-anon-key
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
+import * as XLSX from "xlsx";
 
-// ── Supabase client ──────────────────────────────────────────
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL as string,
-  import.meta.env.VITE_SUPABASE_ANON_KEY as string
+// ─── Supabase ────────────────────────────────────────────────
+const sb = createClient(
+  (import.meta as any).env.VITE_SUPABASE_URL as string,
+  (import.meta as any).env.VITE_SUPABASE_ANON_KEY as string
 );
 
-// ── Types ────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────
 type Status = "pass" | "fail" | "untested";
+type Priority = "Critical" | "High" | "Medium" | "Low";
+type AppView = "login" | "checklist" | "admin";
+type Role = "Student" | "Teacher" | "Admin";
 
-interface TestItem {
+const ALL_ROLES: Role[] = ["Student", "Teacher", "Admin"];
+
+const ROLE_CFG: Record<Role, { color: string; bg: string; icon: string }> = {
+  Student: { color: "#38bdf8", bg: "#0c2a3f", icon: "🎓" },
+  Teacher: { color: "#a78bfa", bg: "#1e1040", icon: "📖" },
+  Admin:   { color: "#fb923c", bg: "#2d1506", icon: "🔧" },
+};
+
+interface TestCase {
   id: string;
-  title: string;
-  procedure: string;
-  expected: string;
-  linkRequired?: boolean;
-}
-
-interface Section {
   section: string;
-  color: string;
-  items: TestItem[];
+  title: string;
+  procedure?: string;
+  expected_result?: string;
+  priority: Priority;
+  link_required: boolean;
+  is_active: boolean;
+  roles: Role[];   // multi-value, stored as text[] in Supabase
 }
 
 interface TestResult {
+  id?: string;
+  user_name: string;
+  user_email: string;
   test_id: string;
   status: Status;
   notes: string;
-  test_title?: string;
-  user_name: string;
-  user_email: string;
   updated_at: string;
 }
 
-interface AllResults {
-  [testId: string]: TestResult[];
+interface UserSummary {
+  user_name: string;
+  user_email: string;
+  passed: number;
+  failed: number;
+  skipped: number;
+  total_tested: number;
+  pass_rate: number;
+  last_active: string;
 }
 
-// ── Checklist data ───────────────────────────────────────────
-const CHECKLIST: Section[] = [
-  {
-    section: "LTI 1.3 Integration Setup",
-    color: "#0ea5e9",
-    items: [
-      { id: "lti-1", title: "LTI 1.3 Tool Launch", procedure: "From your LMS course, click the Turnitin assignment link. Verify it launches without errors and you land on the Turnitin interface.", expected: "Tool launches successfully via LTI 1.3 handshake." },
-      { id: "lti-2", title: "Role Mapping — Instructor", procedure: "Log in as an Instructor in the LMS, open a Turnitin assignment. Confirm you see the instructor dashboard (inbox, settings).", expected: "Instructor role correctly passed; instructor view shown." },
-      { id: "lti-3", title: "Role Mapping — Student", procedure: "Log in as a Student, open the same assignment. Confirm you see the student submission view, not instructor controls.", expected: "Student role correctly passed; student view shown." },
-      { id: "lti-4", title: "Deep Linking / Content Item Return", procedure: "Create a new Turnitin assignment directly from within the LMS using the LTI content picker. Save and verify the link appears in the course.", expected: "Assignment created and linked back to LMS successfully." },
-    ],
-  },
-  {
-    section: "Assignment & Grade Visibility",
-    color: "#f59e0b",
-    items: [
-      { id: "grade-1", title: "Grades Visible Prior to Post Date", procedure: "Open the TII assignment link where grades are visible before the post date. As a student, check if grade/mark is visible before the post date.", expected: "Investigate — grades should NOT be visible before post date. This is a bug if they are.", linkRequired: true },
-      { id: "grade-2", title: "Grades Hidden Before Post Date", procedure: "Set a post date in the future. Submit as a student. Check the grade column in LMS — grade should be hidden/unreleased.", expected: "Grade not visible to student until post date is reached." },
-      { id: "grade-3", title: "Grade Passback to LMS Gradebook", procedure: "As instructor, mark a submission in Turnitin Feedback Studio. Wait, then check the LMS gradebook for that student.", expected: "Grade passed back automatically via LTI Advantage AGS." },
-      { id: "grade-4", title: "Late Submission Handling", procedure: "Submit a paper after the due date. Check if TII marks it as late and whether it's accepted or blocked per assignment settings.", expected: "Late submissions handled per configured policy." },
-    ],
-  },
-  {
-    section: "Assignment Copy Tool",
-    color: "#8b5cf6",
-    items: [
-      { id: "copy-1", title: "Copy Assignment — Same Course", procedure: "Use the 'Copy Assignment' or duplicate option within the same course. Verify all settings (due date, post date, rubric, originality settings) are preserved.", expected: "Assignment duplicated with all settings intact." },
-      { id: "copy-2", title: "Copy Assignment — Different Course", procedure: "Copy a Turnitin assignment to a different course. Launch the copied assignment and verify settings transferred correctly.", expected: "Assignment copies across courses; settings preserved." },
-      { id: "copy-3", title: "Rubric Preserved After Copy", procedure: "Attach a rubric to an assignment, then copy it. Open the copied assignment and confirm the rubric is still attached.", expected: "Rubric carried over with the assignment copy." },
-    ],
-  },
-  {
-    section: "Rubric Management",
-    color: "#10b981",
-    items: [
-      { id: "rubric-1", title: "Import a Rubric", procedure: "In the Turnitin assignment, go to Optional Settings → Rubric. Select 'Import Rubric'. Upload a valid .rbc or Excel rubric file. Save and attach it.", expected: "Rubric imported and attached without errors." },
-      { id: "rubric-2", title: "Create a New Rubric", procedure: "Inside the rubric manager, click 'Create New Rubric'. Add 3 criteria and 3 scale levels. Set point values. Save and attach it to an assignment.", expected: "Rubric created, saved, and attached successfully." },
-      { id: "rubric-3", title: "Rubric Visible to Students (Before Submission)", procedure: "Enable 'Allow students to view rubric before submission'. Log in as student, open the assignment and look for the rubric icon/link.", expected: "Students can view the rubric before submitting." },
-      { id: "rubric-4", title: "Rubric Displays Correctly to Students", procedure: "As a student, click to view the rubric. Check all criteria, scale levels, descriptions, and point values render correctly on desktop and mobile.", expected: "Rubric renders fully and is readable across device sizes." },
-      { id: "rubric-5", title: "Rubric Used in Grading — Instructor View", procedure: "Open a submission in Feedback Studio as instructor. Click the rubric icon. Score each criterion. Verify total score calculates and can be saved.", expected: "Rubric scoring works; total auto-calculates correctly." },
-      { id: "rubric-6", title: "Graded Rubric Visible to Student", procedure: "After instructor scores the rubric and the post date has passed, log in as student and open the feedback. Verify the completed rubric is visible.", expected: "Student sees scored rubric with criterion-level feedback." },
-    ],
-  },
-  {
-    section: "Submission Deletion & Privacy",
-    color: "#ef4444",
-    items: [
-      { id: "del-1", title: "Instructor Deletes a Student Submission", procedure: "In the assignment inbox, locate a student submission. Click the delete/trash icon. Confirm the deletion prompt. Verify the submission is removed from the inbox.", expected: "Submission deleted from inbox; student can re-submit if allowed." },
-      { id: "del-2", title: "Student Re-submission After Deletion", procedure: "After deleting a student's submission, log in as that student and attempt to re-submit a paper.", expected: "Student is able to re-submit after instructor deletes their original." },
-      { id: "del-3", title: "Request Permanent Deletion of a Student Paper", procedure: "In the assignment inbox, locate the submission. Find 'Request Permanent Deletion' option (may be under a kebab menu). Submit the request with a valid reason.", expected: "Permanent deletion request submitted; confirmation message shown." },
-      { id: "del-4", title: "Permanent Deletion — Paper Removed from Repository", procedure: "After Turnitin processes the deletion request, submit the same paper again to a test assignment. Check the Similarity Report — paper should not match itself.", expected: "Paper removed from Turnitin's repository; no self-match on re-submission." },
-    ],
-  },
-  {
-    section: "Submission & Similarity",
-    color: "#06b6d4",
-    items: [
-      { id: "sub-1", title: "Student File Upload Submission", procedure: "As student, submit a Word (.docx) file. Verify the submission receipt is shown and the paper appears in the instructor inbox.", expected: "File accepted; submission receipt displayed." },
-      { id: "sub-2", title: "Student Text-Only Submission", procedure: "As student, use the text box submission option. Paste at least 200 words and submit. Verify it processes.", expected: "Text submission accepted and processed." },
-      { id: "sub-3", title: "Similarity Report Generates", procedure: "Wait for the Similarity Report to generate. Open the report as instructor. Verify score and highlighted sources appear.", expected: "Similarity Report generated; score and sources visible." },
-      { id: "sub-4", title: "Student Views Own Similarity Report", procedure: "If configured to show reports to students, log in as student and open the submission. Verify they can see the Similarity Report.", expected: "Student sees similarity score per assignment settings." },
-    ],
-  },
-  {
-    section: "Feedback Studio",
-    color: "#f97316",
-    items: [
-      { id: "fb-1", title: "Inline Comments", procedure: "Open a submission in Feedback Studio. Highlight text and add an inline comment. Save. Reopen and verify the comment persists.", expected: "Inline comment saved and displayed on re-open." },
-      { id: "fb-2", title: "QuickMarks", procedure: "In Feedback Studio, drag a QuickMark from the sidebar onto the paper. Verify it attaches to the correct location.", expected: "QuickMark placed and saved correctly." },
-      { id: "fb-3", title: "Voice Comments", procedure: "Click the microphone icon in Feedback Studio. Record a short voice comment. Save. Verify it appears on the submission.", expected: "Voice comment recorded and playable." },
-      { id: "fb-4", title: "General Feedback / Summary", procedure: "In the general comments area, type overall feedback. Save. Check as student (post post-date) that the general comment is visible.", expected: "General feedback saved and visible to student after release." },
-    ],
-  },
-  {
-    section: "Additional Checks",
-    color: "#64748b",
-    items: [
-      { id: "misc-1", title: "Anonymous Marking Mode", procedure: "Enable anonymous marking in assignment settings. As instructor, open the inbox — verify student names are hidden. Grade a paper. Unmask after grading.", expected: "Student identities hidden during anonymous marking phase." },
-      { id: "misc-2", title: "Originality Check Settings", procedure: "In assignment settings, verify 'Check against: Student paper repository, Web, Publications' options. Adjust and save. Submit a test paper and verify the report reflects configured sources.", expected: "Similarity checked against configured sources only." },
-      { id: "misc-3", title: "Resubmission Policy", procedure: "Set resubmission policy to 'Allow resubmissions until due date'. As student, submit once, then resubmit. Verify the new submission replaces the old.", expected: "Resubmission policy respected; latest submission shown." },
-      { id: "misc-4", title: "Accessibility — Keyboard Navigation", procedure: "Navigate the Turnitin interface using only keyboard (Tab, Enter, Arrow keys). Test the submission form, inbox, and Feedback Studio.", expected: "All interactive elements reachable and operable by keyboard." },
-      { id: "misc-5", title: "Email Notifications", procedure: "After submission, check if the student receives a submission confirmation email. After grading and post date, check if a grade-released notification is sent.", expected: "Submission and grade-release emails received by student per settings." },
-    ],
-  },
-];
+interface TestCoverage {
+  id: string;
+  section: string;
+  title: string;
+  priority: Priority;
+  pass_count: number;
+  fail_count: number;
+  untested_count: number;
+  tester_count: number;
+  testers: string;
+}
 
-// ── Helpers ──────────────────────────────────────────────────
-const ALL_IDS = CHECKLIST.flatMap((s) => s.items.map((i) => i.id));
+// ─── Constants ───────────────────────────────────────────────
+const PRIORITY_CFG: Record<Priority, { color: string; bg: string }> = {
+  Critical: { color: "#ef4444", bg: "#450a0a" },
+  High:     { color: "#f97316", bg: "#431407" },
+  Medium:   { color: "#eab308", bg: "#422006" },
+  Low:      { color: "#22c55e", bg: "#052e16" },
+};
 
-function StatusBadge({ status }: { status: Status }) {
-  const cfg = {
-    pass: { bg: "#dcfce7", color: "#15803d", label: "PASS", icon: "✓" },
-    fail: { bg: "#fee2e2", color: "#b91c1c", label: "FAIL", icon: "✗" },
-    untested: { bg: "#f1f5f9", color: "#64748b", label: "UNTESTED", icon: "–" },
-  }[status];
+const STATUS_CFG = {
+  pass:     { color: "#4ade80", bg: "#14532d", label: "PASS",    icon: "✓" },
+  fail:     { color: "#f87171", bg: "#450a0a", label: "FAIL",    icon: "✗" },
+  untested: { color: "#64748b", bg: "#1e293b", label: "UNTESTED",icon: "–" },
+};
+
+// ─── Tiny helpers ────────────────────────────────────────────
+const pct = (n: number, d: number) => (d ? Math.round((n / d) * 100) : 0);
+
+function Badge({ status }: { status: Status }) {
+  const c = STATUS_CFG[status];
   return (
-    <span style={{ background: cfg.bg, color: cfg.color, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, fontFamily: "monospace", letterSpacing: "0.05em" }}>
-      {cfg.icon} {cfg.label}
+    <span style={{ background: c.bg, color: c.color, fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999, fontFamily: "monospace", whiteSpace: "nowrap" }}>
+      {c.icon} {c.label}
     </span>
   );
 }
 
-// ── User Login Screen ────────────────────────────────────────
-function LoginScreen({ onLogin }: { onLogin: (name: string, email: string) => void }) {
+function PriBadge({ p }: { p: Priority }) {
+  const c = PRIORITY_CFG[p];
+  return (
+    <span style={{ background: c.bg, color: c.color, fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 999, fontFamily: "monospace" }}>{p}</span>
+  );
+}
+
+function RoleBadge({ role }: { role: Role }) {
+  const c = ROLE_CFG[role];
+  return (
+    <span style={{ background: c.bg, color: c.color, fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 999, fontFamily: "monospace", display: "inline-flex", alignItems: "center", gap: 3 }}>
+      {c.icon} {role}
+    </span>
+  );
+}
+
+function RoleToggle({ value, onChange }: { value: Role[]; onChange: (r: Role[]) => void }) {
+  const toggle = (r: Role) =>
+    onChange(value.includes(r) ? value.filter(x => x !== r) : [...value, r]);
+  return (
+    <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+      {ALL_ROLES.map(r => {
+        const on = value.includes(r);
+        const c = ROLE_CFG[r];
+        return (
+          <button key={r} onClick={() => toggle(r)} style={{ padding: "3px 10px", borderRadius: 999, border: `1px solid ${on ? c.color : "#1e3a5f"}`, background: on ? c.bg : "transparent", color: on ? c.color : "#334155", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "monospace", transition: "all .15s" }}>
+            {c.icon} {r}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+
+function MiniBar({ pass, fail, total }: { pass: number; fail: number; total: number }) {
+  const pp = pct(pass, total), fp = pct(fail, total);
+  return (
+    <div style={{ height: 6, background: "#1e293b", borderRadius: 999, overflow: "hidden", display: "flex" }}>
+      <div style={{ width: `${pp}%`, background: "#22c55e", transition: "width .4s" }} />
+      <div style={{ width: `${fp}%`, background: "#ef4444", transition: "width .4s" }} />
+    </div>
+  );
+}
+
+// ─── Login ───────────────────────────────────────────────────
+function LoginScreen({ onLogin }: { onLogin: (n: string, e: string) => void }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [err, setErr] = useState("");
 
-  const handleSubmit = () => {
-    if (!name.trim()) { setErr("Please enter your name."); return; }
-    if (!email.trim() || !email.includes("@")) { setErr("Please enter a valid email."); return; }
+  const go = () => {
+    if (!name.trim()) { setErr("Name required."); return; }
+    if (!email.includes("@")) { setErr("Valid email required."); return; }
     onLogin(name.trim(), email.trim().toLowerCase());
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div style={{ background: "#1e293b", borderRadius: 20, padding: "40px 36px", width: "100%", maxWidth: 420, boxShadow: "0 25px 60px rgba(0,0,0,0.5)" }}>
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>🎓</div>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#f1f5f9", fontFamily: "'DM Sans', sans-serif" }}>Turnitin QA Checklist</h1>
-          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#94a3b8", fontFamily: "'DM Sans', sans-serif" }}>LTI 1.3 Integration Testing</p>
+    <div style={{ minHeight: "100vh", background: "#060d1a", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, backgroundImage: "radial-gradient(ellipse at 20% 50%, rgba(14,165,233,0.07) 0%, transparent 60%), radial-gradient(ellipse at 80% 20%, rgba(139,92,246,0.06) 0%, transparent 50%)" }}>
+      <div style={{ width: "100%", maxWidth: 400 }}>
+        <div style={{ textAlign: "center", marginBottom: 36 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 64, height: 64, borderRadius: 18, background: "linear-gradient(135deg,#0ea5e9,#6366f1)", marginBottom: 16, fontSize: 30 }}>📋</div>
+          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: "#f8fafc", fontFamily: "'Syne', sans-serif", letterSpacing: "-0.03em" }}>QA Checklist</h1>
+          <p style={{ margin: "8px 0 0", color: "#475569", fontSize: 13, fontFamily: "'DM Sans', sans-serif" }}>Enter your details to start testing</p>
         </div>
 
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#94a3b8", marginBottom: 6, fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em" }}>Your Name</label>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Sarah Johnson"
-            style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #334155", background: "#0f172a", color: "#f1f5f9", fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" }}
-          />
+        <div style={{ background: "#0f1a2e", border: "1px solid #1e3a5f", borderRadius: 16, padding: "28px 24px" }}>
+          {["Name", "Email"].map((label, i) => (
+            <div key={label} style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#475569", marginBottom: 6, fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.09em" }}>{label}</label>
+              <input
+                value={i === 0 ? name : email}
+                type={i === 1 ? "email" : "text"}
+                placeholder={i === 0 ? "Sarah Johnson" : "sarah@org.com"}
+                onChange={e => i === 0 ? setName(e.target.value) : setEmail(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && go()}
+                style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #1e3a5f", background: "#060d1a", color: "#f1f5f9", fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" }}
+              />
+            </div>
+          ))}
+          {err && <p style={{ color: "#f87171", fontSize: 12, margin: "0 0 12px", fontFamily: "'DM Sans', sans-serif" }}>{err}</p>}
+          <button onClick={go} style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: "linear-gradient(135deg,#0ea5e9,#6366f1)", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em" }}>
+            Start Testing →
+          </button>
         </div>
-        <div style={{ marginBottom: 24 }}>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#94a3b8", marginBottom: 6, fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em" }}>Email Address</label>
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="e.g. sarah@yourorg.com"
-            type="email"
-            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-            style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #334155", background: "#0f172a", color: "#f1f5f9", fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" }}
-          />
-        </div>
-
-        {err && <p style={{ color: "#f87171", fontSize: 13, marginBottom: 16, fontFamily: "'DM Sans', sans-serif" }}>{err}</p>}
-
-        <button
-          onClick={handleSubmit}
-          style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: "linear-gradient(135deg, #0ea5e9, #38bdf8)", color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}
-        >
-          Start Testing →
-        </button>
       </div>
     </div>
   );
 }
 
-// ── Test Row ─────────────────────────────────────────────────
-function TestRow({
-  item, section, color, myResult, allResults, onSave, saving,
+// ─── Admin view ──────────────────────────────────────────────
+function AdminView({
+  onBack, testCases, onCasesReloaded,
 }: {
-  item: TestItem; section: string; color: string;
-  myResult: TestResult | null; allResults: TestResult[];
-  onSave: (id: string, section: string, title: string, status: Status, notes: string) => void;
+  onBack: () => void;
+  testCases: TestCase[];
+  onCasesReloaded: () => void;
+}) {
+  const [tab, setTab] = useState<"upload" | "analytics" | "coverage">("analytics");
+  const [users, setUsers] = useState<UserSummary[]>([]);
+  const [coverage, setCoverage] = useState<TestCoverage[]>([]);
+  const [loadingAnalytics, setLoadingAnalytics] = useState(true);
+  const [uploadState, setUploadState] = useState<"idle" | "parsing" | "uploading" | "done" | "error">("idle");
+  const [uploadMsg, setUploadMsg] = useState("");
+  const [preview, setPreview] = useState<TestCase[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    Promise.all([
+      sb.from("v_user_summary").select("*"),
+      sb.from("v_test_coverage").select("*"),
+    ]).then(([u, c]) => {
+      setUsers((u.data ?? []) as UserSummary[]);
+      setCoverage((c.data ?? []) as TestCoverage[]);
+      setLoadingAnalytics(false);
+    });
+  }, []);
+
+  // ── xlsx upload ──
+  const handleFile = async (file: File) => {
+    setUploadState("parsing");
+    setPreview([]);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf);
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: "" });
+
+      const cases: TestCase[] = rows.map((r) => {
+        const rawRoles = String(r.roles ?? "").trim();
+        const parsedRoles: Role[] = rawRoles
+          ? rawRoles.split(",").map(s => s.trim()).filter((s): s is Role => ALL_ROLES.includes(s as Role))
+          : [];
+        return {
+          id: String(r.id ?? "").trim(),
+          section: String(r.section ?? "").trim(),
+          title: String(r.title ?? "").trim(),
+          procedure: String(r.procedure ?? "").trim(),
+          expected_result: String(r.expected_result ?? "").trim(),
+          priority: (["Critical","High","Medium","Low"].includes(r.priority) ? r.priority : "Medium") as Priority,
+          link_required: String(r.link_required ?? "").toUpperCase() === "TRUE",
+          roles: parsedRoles,
+          is_active: true,
+        };
+      }).filter(c => c.id && c.title);
+
+      if (!cases.length) throw new Error("No valid rows found. Check column headers match the template.");
+      setPreview(cases);
+      setUploadState("idle");
+      setUploadMsg(`✓ Parsed ${cases.length} test cases. Review below and confirm upload.`);
+    } catch (e: any) {
+      setUploadState("error");
+      setUploadMsg(e.message ?? "Parse error");
+    }
+  };
+
+  const confirmUpload = async () => {
+    if (!preview.length) return;
+    setUploadState("uploading");
+    // Deactivate old cases not in new set
+    const newIds = preview.map(c => c.id);
+    await sb.from("test_cases").update({ is_active: false }).not("id", "in", `(${newIds.map(i => `"${i}"`).join(",")})`)
+    const { error } = await sb.from("test_cases").upsert(preview, { onConflict: "id" });
+    if (error) { setUploadState("error"); setUploadMsg(error.message); return; }
+    setUploadState("done");
+    setUploadMsg(`✓ ${preview.length} test cases uploaded successfully!`);
+    setPreview([]);
+    onCasesReloaded();
+  };
+
+  // ── analytics numbers ──
+  const totalUsers = users.length;
+  const totalPass = users.reduce((a, u) => a + Number(u.passed), 0);
+  const totalFail = users.reduce((a, u) => a + Number(u.failed), 0);
+  const totalTests = testCases.length;
+  const coveredTests = coverage.filter(c => c.tester_count > 0).length;
+
+  const TABS = [
+    { key: "analytics", label: "📊 Analytics" },
+    { key: "coverage",  label: "🗂 Coverage" },
+    { key: "upload",    label: "📤 Upload Cases" },
+  ] as const;
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#060d1a", fontFamily: "'DM Sans', sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;900&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+      {/* Header */}
+      <div style={{ background: "#0a1628", borderBottom: "1px solid #1e3a5f", padding: "14px 24px" }}>
+        <div style={{ maxWidth: 1000, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button onClick={onBack} style={{ background: "#1e293b", border: "1px solid #334155", color: "#94a3b8", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 12 }}>← Back</button>
+            <span style={{ fontFamily: "'Syne', sans-serif", fontWeight: 900, fontSize: 18, color: "#f1f5f9" }}>Admin Panel</span>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {TABS.map(t => (
+              <button key={t.key} onClick={() => setTab(t.key)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, background: tab === t.key ? "linear-gradient(135deg,#0ea5e9,#6366f1)" : "#1e293b", color: tab === t.key ? "#fff" : "#64748b", fontFamily: "'DM Sans', sans-serif" }}>{t.label}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1000, margin: "0 auto", padding: "24px 16px 48px" }}>
+
+        {/* ── Analytics tab ── */}
+        {tab === "analytics" && (
+          <div>
+            {/* KPI cards */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 28 }}>
+              {[
+                { label: "Total Testers", value: totalUsers, color: "#0ea5e9", icon: "👥" },
+                { label: "Test Cases", value: totalTests, color: "#a78bfa", icon: "📋" },
+                { label: "Total Passes", value: totalPass, color: "#22c55e", icon: "✓" },
+                { label: "Total Failures", value: totalFail, color: "#ef4444", icon: "✗" },
+                { label: "Coverage", value: `${coveredTests}/${totalTests}`, color: "#f59e0b", icon: "🎯" },
+              ].map(k => (
+                <div key={k.label} style={{ background: "#0f1a2e", border: "1px solid #1e3a5f", borderRadius: 14, padding: "18px 20px" }}>
+                  <div style={{ fontSize: 22, marginBottom: 6 }}>{k.icon}</div>
+                  <div style={{ fontSize: 26, fontWeight: 900, color: k.color, fontFamily: "'Syne', sans-serif" }}>{k.value}</div>
+                  <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" }}>{k.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Per-user table */}
+            <div style={{ background: "#0f1a2e", border: "1px solid #1e3a5f", borderRadius: 16, overflow: "hidden" }}>
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid #1e3a5f" }}>
+                <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#f1f5f9" }}>👥 Testers</h3>
+              </div>
+              {loadingAnalytics ? (
+                <div style={{ padding: 24, color: "#475569", textAlign: "center" }}>Loading…</div>
+              ) : users.length === 0 ? (
+                <div style={{ padding: 24, color: "#475569", textAlign: "center" }}>No testers yet.</div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ background: "#0a1628" }}>
+                        {["Tester","Email","Pass","Fail","Tested","Pass Rate","Progress","Last Active"].map(h => (
+                          <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 10, color: "#475569", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.map((u, i) => (
+                        <tr key={u.user_email} style={{ borderTop: "1px solid #1e3a5f", background: i % 2 === 0 ? "#0f1a2e" : "#0a1628" }}>
+                          <td style={{ padding: "10px 14px", fontSize: 13, color: "#f1f5f9", fontWeight: 600, whiteSpace: "nowrap" }}>{u.user_name}</td>
+                          <td style={{ padding: "10px 14px", fontSize: 12, color: "#475569" }}>{u.user_email}</td>
+                          <td style={{ padding: "10px 14px" }}><span style={{ color: "#4ade80", fontWeight: 700, fontSize: 13 }}>{u.passed}</span></td>
+                          <td style={{ padding: "10px 14px" }}><span style={{ color: "#f87171", fontWeight: 700, fontSize: 13 }}>{u.failed}</span></td>
+                          <td style={{ padding: "10px 14px", fontSize: 12, color: "#94a3b8" }}>{u.total_tested}</td>
+                          <td style={{ padding: "10px 14px" }}>
+                            <span style={{ color: Number(u.pass_rate) >= 80 ? "#4ade80" : Number(u.pass_rate) >= 50 ? "#fbbf24" : "#f87171", fontWeight: 700, fontSize: 13 }}>{u.pass_rate ?? 0}%</span>
+                          </td>
+                          <td style={{ padding: "10px 14px", minWidth: 100 }}>
+                            <MiniBar pass={Number(u.passed)} fail={Number(u.failed)} total={Number(u.total_tested)} />
+                          </td>
+                          <td style={{ padding: "10px 14px", fontSize: 11, color: "#334155", whiteSpace: "nowrap" }}>{u.last_active ? new Date(u.last_active).toLocaleDateString() : "–"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Coverage tab ── */}
+        {tab === "coverage" && (
+          <div style={{ background: "#0f1a2e", border: "1px solid #1e3a5f", borderRadius: 16, overflow: "hidden" }}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #1e3a5f" }}>
+              <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#f1f5f9" }}>🗂 Test Coverage — who tested what</h3>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: "#0a1628" }}>
+                    {["ID","Section","Title","Priority","Roles","✓ Pass","✗ Fail","Testers","Tested By"].map(h => (
+                      <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 10, color: "#475569", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {coverage.map((c, i) => (
+                    <tr key={c.id} style={{ borderTop: "1px solid #1e3a5f", background: i % 2 === 0 ? "#0f1a2e" : "#0a1628" }}>
+                      <td style={{ padding: "10px 14px", fontSize: 11, color: "#475569", fontFamily: "monospace" }}>{c.id}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 12, color: "#7dd3fc" }}>{c.section}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 12, color: "#f1f5f9", maxWidth: 200 }}>{c.title}</td>
+                      <td style={{ padding: "10px 14px" }}><PriBadge p={c.priority} /></td>
+                      <td style={{ padding: "10px 14px" }}>
+                        <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+                          {((c as any).roles as Role[] ?? []).map((r: Role) => <RoleBadge key={r} role={r} />)}
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 14px", color: "#4ade80", fontWeight: 700, fontSize: 13 }}>{c.pass_count}</td>
+                      <td style={{ padding: "10px 14px", color: "#f87171", fontWeight: 700, fontSize: 13 }}>{c.fail_count}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 12, color: "#94a3b8" }}>{c.tester_count}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 11, color: "#475569", maxWidth: 200, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.testers ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── Upload tab ── */}
+        {tab === "upload" && (
+          <div>
+            {/* Instructions */}
+            <div style={{ background: "#0f1a2e", border: "1px solid #1e3a5f", borderRadius: 14, padding: "16px 20px", marginBottom: 20 }}>
+              <h3 style={{ margin: "0 0 8px", fontSize: 14, color: "#f1f5f9" }}>📄 xlsx Column Headers</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
+                {[
+                  ["id","Unique key, e.g. lti-1"],
+                  ["section","Group / category"],
+                  ["title","Short test name"],
+                  ["procedure","Testing steps"],
+                  ["expected_result","What should happen"],
+                  ["priority","Critical/High/Medium/Low"],
+                  ["link_required","TRUE or FALSE"],
+                  ["roles","Comma-separated: Student, Teacher, Admin"],
+                ].map(([col, desc]) => (
+                  <div key={col} style={{ background: "#0a1628", borderRadius: 8, padding: "8px 12px" }}>
+                    <div style={{ fontSize: 11, fontFamily: "monospace", color: "#0ea5e9", fontWeight: 700 }}>{col}</div>
+                    <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>{desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Drop zone */}
+            <div
+              onClick={() => fileRef.current?.click()}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+              style={{ border: "2px dashed #1e3a5f", borderRadius: 14, padding: "40px 20px", textAlign: "center", cursor: "pointer", background: "#0f1a2e", marginBottom: 20, transition: "border-color .2s" }}
+            >
+              <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+              <div style={{ fontSize: 36, marginBottom: 8 }}>📤</div>
+              <div style={{ fontWeight: 700, color: "#7dd3fc", fontFamily: "'Syne', sans-serif", fontSize: 15 }}>Drop your .xlsx here or click to browse</div>
+              <div style={{ fontSize: 12, color: "#334155", marginTop: 4 }}>Replaces existing test cases on confirm</div>
+            </div>
+
+            {uploadMsg && (
+              <div style={{ background: uploadState === "error" ? "#450a0a" : "#0f2a1a", border: `1px solid ${uploadState === "error" ? "#ef4444" : "#22c55e"}`, borderRadius: 10, padding: "10px 16px", marginBottom: 16, fontSize: 13, color: uploadState === "error" ? "#f87171" : "#4ade80", fontFamily: "monospace" }}>
+                {uploadMsg}
+              </div>
+            )}
+
+            {/* Preview table */}
+            {preview.length > 0 && (
+              <div style={{ background: "#0f1a2e", border: "1px solid #1e3a5f", borderRadius: 14, overflow: "hidden", marginBottom: 16 }}>
+                <div style={{ padding: "12px 18px", borderBottom: "1px solid #1e3a5f", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9" }}>Preview — {preview.length} cases</span>
+                  <button onClick={confirmUpload} disabled={uploadState === "uploading"} style={{ padding: "7px 18px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#22c55e,#16a34a)", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+                    {uploadState === "uploading" ? "Uploading…" : "✓ Confirm & Upload"}
+                  </button>
+                </div>
+                <div style={{ overflowX: "auto", maxHeight: 360, overflowY: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead style={{ position: "sticky", top: 0, background: "#0a1628" }}>
+                      <tr>
+                        {["ID","Section","Title","Priority","Roles","Link?"].map(h => (
+                          <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, color: "#475569", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.map((c, i) => (
+                        <tr key={c.id} style={{ borderTop: "1px solid #1e3a5f", background: i % 2 === 0 ? "#0f1a2e" : "#0a1628" }}>
+                          <td style={{ padding: "8px 12px", fontSize: 11, color: "#475569", fontFamily: "monospace" }}>{c.id}</td>
+                          <td style={{ padding: "8px 12px", fontSize: 12, color: "#7dd3fc" }}>{c.section}</td>
+                          <td style={{ padding: "8px 12px", fontSize: 12, color: "#f1f5f9" }}>{c.title}</td>
+                          <td style={{ padding: "8px 12px" }}><PriBadge p={c.priority} /></td>
+                          <td style={{ padding: "8px 12px" }}>
+                            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                              {c.roles.length ? c.roles.map(r => <RoleBadge key={r} role={r} />) : <span style={{ fontSize: 10, color: "#334155" }}>—</span>}
+                            </div>
+                          </td>
+                          <td style={{ padding: "8px 12px", fontSize: 12, color: c.link_required ? "#fb923c" : "#334155" }}>{c.link_required ? "⚠ Yes" : "No"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Test row ────────────────────────────────────────────────
+function TestRow({
+  tc, myResult, otherResults, onSave, saving,
+}: {
+  tc: TestCase;
+  myResult: TestResult | null;
+  otherResults: TestResult[];
+  onSave: (testId: string, status: Status, notes: string) => void;
   saving: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<Status>(myResult?.status ?? "untested");
   const [notes, setNotes] = useState(myResult?.notes ?? "");
   const [dirty, setDirty] = useState(false);
+  const [editingRoles, setEditingRoles] = useState(false);
+  const [localRoles, setLocalRoles] = useState<Role[]>(tc.roles ?? []);
+  const [rolesSaving, setRolesSaving] = useState(false);
 
+  useEffect(() => {
+    if (myResult) { setStatus(myResult.status); setNotes(myResult.notes ?? ""); setDirty(false); }
+  }, [myResult]);
 
-  const otherTesters = allResults.filter((r) => r.status !== "untested");
+  useEffect(() => { setLocalRoles(tc.roles ?? []); }, [tc.roles]);
 
-  const borderColor = status === "pass" ? "#22c55e" : status === "fail" ? "#ef4444" : "#334155";
-  const rowBg = status === "pass" ? "#0f2a1a" : status === "fail" ? "#2a0f0f" : "#1e293b";
+  const saveRoles = async () => {
+    setRolesSaving(true);
+    await sb.from("test_cases").update({ roles: localRoles }).eq("id", tc.id);
+    tc.roles = localRoles; // optimistic local update
+    setEditingRoles(false);
+    setRolesSaving(false);
+  };
+
+  const others = otherResults.filter(r => r.status !== "untested");
+  const borderCol = status === "pass" ? "#22c55e33" : status === "fail" ? "#ef444433" : "#1e3a5f";
+  const rowBg = status === "pass" ? "#0a1a10" : status === "fail" ? "#1a0a0a" : "#0f1a2e";
 
   return (
-    <div style={{ background: rowBg, border: `1px solid ${borderColor}`, borderRadius: 12, marginBottom: 8, overflow: "hidden", transition: "all 0.2s" }}>
-      {/* Header row */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer" }} onClick={() => setExpanded((v) => !v)}>
-        <StatusBadge status={status} />
-        <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#f1f5f9", fontFamily: "'DM Sans', sans-serif" }}>{item.title}</span>
-        {item.linkRequired && (
-          <span style={{ fontSize: 11, background: "#451a03", color: "#fb923c", padding: "2px 8px", borderRadius: 999, fontWeight: 700, flexShrink: 0 }}>⚠ LINK NEEDED</span>
+    <div style={{ background: rowBg, border: `1px solid ${borderCol}`, borderRadius: 12, marginBottom: 8, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 14px", cursor: "pointer" }} onClick={() => setOpen(v => !v)}>
+        <Badge status={status} />
+        <PriBadge p={tc.priority} />
+        {localRoles.length > 0 && (
+          <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+            {localRoles.map(r => <RoleBadge key={r} role={r} />)}
+          </div>
         )}
-        {otherTesters.length > 0 && (
-          <span style={{ fontSize: 11, color: "#94a3b8", flexShrink: 0 }}>{otherTesters.length} tester{otherTesters.length > 1 ? "s" : ""}</span>
-        )}
-        <span style={{ color: "#475569", fontSize: 16, transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.2s", flexShrink: 0 }}>▾</span>
+        <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#e2e8f0", fontFamily: "'DM Sans', sans-serif" }}>{tc.title}</span>
+        {tc.link_required && <span style={{ fontSize: 10, background: "#431407", color: "#fb923c", padding: "2px 7px", borderRadius: 999, fontWeight: 700, flexShrink: 0 }}>⚠ LINK</span>}
+        {others.length > 0 && <span style={{ fontSize: 11, color: "#334155", flexShrink: 0 }}>{others.length} tester{others.length > 1 ? "s" : ""}</span>}
+        <span style={{ color: "#334155", fontSize: 14, transform: open ? "rotate(180deg)" : "none", transition: "transform .2s", flexShrink: 0 }}>▾</span>
       </div>
 
-      {expanded && (
-        <div style={{ padding: "0 14px 16px", borderTop: "1px solid #334155" }}>
-          {/* Procedure + Expected */}
+      {open && (
+        <div style={{ padding: "0 14px 16px", borderTop: "1px solid #1e3a5f" }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, margin: "12px 0" }}>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#0ea5e9", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>📋 Procedure</div>
-              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.6, fontFamily: "'DM Sans', sans-serif" }}>{item.procedure}</p>
-            </div>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#10b981", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>✅ Expected</div>
-              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.6, fontFamily: "'DM Sans', sans-serif" }}>{item.expected}</p>
-            </div>
+            {[["📋 Procedure", tc.procedure], ["✅ Expected", tc.expected_result]].map(([label, text]) => (
+              <div key={label as string}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: label?.includes("Procedure") ? "#0ea5e9" : "#22c55e", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>{label}</div>
+                <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.6, fontFamily: "'DM Sans', sans-serif" }}>{text || "—"}</p>
+              </div>
+            ))}
           </div>
 
-          {/* Other testers */}
-          {otherTesters.length > 0 && (
-            <div style={{ background: "#0f172a", borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#475569", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>👥 Other Testers</div>
-              {otherTesters.map((r, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: i < otherTesters.length - 1 ? 6 : 0 }}>
-                  <StatusBadge status={r.status} />
+          {/* Role labels + inline editor */}
+          <div style={{ background: "#060d1a", borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#334155", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em" }}>👤 Applies To</div>
+              {!editingRoles
+                ? <button onClick={() => setEditingRoles(true)} style={{ fontSize: 10, color: "#475569", background: "transparent", border: "1px solid #1e3a5f", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>Edit</button>
+                : <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={saveRoles} disabled={rolesSaving} style={{ fontSize: 10, color: "#4ade80", background: "#14532d", border: "none", borderRadius: 6, padding: "2px 10px", cursor: "pointer", fontWeight: 700 }}>{rolesSaving ? "…" : "Save"}</button>
+                    <button onClick={() => { setLocalRoles(tc.roles ?? []); setEditingRoles(false); }} style={{ fontSize: 10, color: "#475569", background: "transparent", border: "1px solid #1e3a5f", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>Cancel</button>
+                  </div>
+              }
+            </div>
+            {editingRoles
+              ? <RoleToggle value={localRoles} onChange={setLocalRoles} />
+              : <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                  {localRoles.length
+                    ? localRoles.map(r => <RoleBadge key={r} role={r} />)
+                    : <span style={{ fontSize: 11, color: "#334155", fontStyle: "italic" }}>No roles assigned — click Edit</span>}
+                </div>
+            }
+          </div>
+
+          {others.length > 0 && (
+            <div style={{ background: "#060d1a", borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#334155", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>👥 Other Testers</div>
+              {others.map((r, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: i < others.length - 1 ? 5 : 0 }}>
+                  <Badge status={r.status} />
                   <div>
-                    <span style={{ fontSize: 12, color: "#cbd5e1", fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>{r.user_name}</span>
-                    <span style={{ fontSize: 11, color: "#475569", marginLeft: 6 }}>{new Date(r.updated_at).toLocaleDateString()}</span>
-                    {r.notes && <p style={{ margin: "2px 0 0", fontSize: 11, color: "#64748b", fontStyle: "italic", fontFamily: "'DM Sans', sans-serif" }}>{r.notes}</p>}
+                    <span style={{ fontSize: 12, color: "#cbd5e1", fontWeight: 600 }}>{r.user_name}</span>
+                    <span style={{ fontSize: 11, color: "#334155", marginLeft: 6 }}>{new Date(r.updated_at).toLocaleDateString()}</span>
+                    {r.notes && <p style={{ margin: "2px 0 0", fontSize: 11, color: "#475569", fontStyle: "italic", fontFamily: "'DM Sans', sans-serif" }}>{r.notes}</p>}
                   </div>
                 </div>
               ))}
@@ -273,47 +602,17 @@ function TestRow({
           )}
 
           {/* My result */}
-          <div style={{ background: "#0f172a", borderRadius: 8, padding: "12px" }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#475569", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>📝 My Result</div>
-
-            {/* Status buttons */}
-            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-              {(["pass", "fail", "untested"] as Status[]).map((s) => (
-                <button
-                  key={s}
-                  onClick={() => { setStatus(s); setDirty(true); }}
-                  style={{
-                    flex: 1, padding: "8px 4px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12, fontFamily: "monospace",
-                    background: status === s ? (s === "pass" ? "#15803d" : s === "fail" ? "#b91c1c" : "#334155") : "#1e293b",
-                    color: status === s ? "#fff" : "#475569",
-                    transition: "all 0.15s",
-                  }}
-                >
+          <div style={{ background: "#060d1a", borderRadius: 8, padding: 12 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#334155", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>📝 My Result</div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              {(["pass", "fail", "untested"] as Status[]).map(s => (
+                <button key={s} onClick={() => { setStatus(s); setDirty(true); }} style={{ flex: 1, padding: "7px 4px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 11, fontFamily: "monospace", transition: "all .15s", background: status === s ? (s === "pass" ? "#15803d" : s === "fail" ? "#b91c1c" : "#334155") : "#1e293b", color: status === s ? "#fff" : "#334155" }}>
                   {s === "pass" ? "✓ PASS" : s === "fail" ? "✗ FAIL" : "– SKIP"}
                 </button>
               ))}
             </div>
-
-            {/* Notes */}
-            <textarea
-              value={notes}
-              onChange={(e) => { setNotes(e.target.value); setDirty(true); }}
-              placeholder="Add notes, observations, or bug details…"
-              rows={2}
-              style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #334155", background: "#1e293b", color: "#f1f5f9", fontSize: 12, fontFamily: "'DM Sans', sans-serif", resize: "vertical", outline: "none", boxSizing: "border-box" }}
-            />
-
-            {/* Save button */}
-            <button
-              onClick={() => { onSave(item.id, section, item.title, status, notes); setDirty(false); }}
-              disabled={saving || (!dirty && !!myResult)}
-              style={{
-                marginTop: 8, padding: "8px 20px", borderRadius: 8, border: "none", cursor: dirty || !myResult ? "pointer" : "default",
-                background: dirty || !myResult ? color : "#1e293b",
-                color: dirty || !myResult ? "#fff" : "#334155",
-                fontWeight: 700, fontSize: 12, fontFamily: "monospace", transition: "all 0.15s",
-              }}
-            >
+            <textarea value={notes} onChange={e => { setNotes(e.target.value); setDirty(true); }} placeholder="Notes, observations, bug details…" rows={2} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #1e3a5f", background: "#0f1a2e", color: "#f1f5f9", fontSize: 12, fontFamily: "'DM Sans', sans-serif", resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+            <button onClick={() => { onSave(tc.id, status, notes); setDirty(false); }} disabled={saving || (!dirty && !!myResult)} style={{ marginTop: 8, padding: "7px 18px", borderRadius: 8, border: "none", cursor: dirty || !myResult ? "pointer" : "default", background: dirty || !myResult ? "linear-gradient(135deg,#0ea5e9,#6366f1)" : "#1e293b", color: dirty || !myResult ? "#fff" : "#334155", fontWeight: 700, fontSize: 11, fontFamily: "monospace", transition: "all .15s" }}>
               {saving ? "Saving…" : myResult && !dirty ? "✓ Saved" : "Save Result"}
             </button>
           </div>
@@ -323,196 +622,177 @@ function TestRow({
   );
 }
 
-// ── Admin / Summary View ─────────────────────────────────────
-function AdminView({ onBack }: { onBack: () => void }) {
-  const [results, setResults] = useState<TestResult[]>([]);
-  const [loading, setLoading] = useState(true);
+// ─── Checklist view ──────────────────────────────────────────
+function ChecklistView({
+  user, testCases, onAdmin, onSignOut,
+}: {
+  user: { name: string; email: string };
+  testCases: TestCase[];
+  onAdmin: () => void;
+  onSignOut: () => void;
+}) {
+  const [myResults, setMyResults] = useState<Record<string, TestResult>>({});
+  const [allResults, setAllResults] = useState<Record<string, TestResult[]>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+  const [filterSection, setFilterSection] = useState("All");
+  const [filterStatus, setFilterStatus] = useState<"all" | Status>("all");
+  const [filterRole, setFilterRole] = useState<Role | "all">("all");
 
-  useEffect(() => {
-    supabase.from("test_results").select("*").then(({ data }) => {
-      setResults(data ?? []);
-      setLoading(false);
+  const load = useCallback(async () => {
+    const { data } = await sb.from("test_results").select("*");
+    const all: Record<string, TestResult[]> = {};
+    const mine: Record<string, TestResult> = {};
+    (data ?? []).forEach((r: TestResult) => {
+      if (!all[r.test_id]) all[r.test_id] = [];
+      all[r.test_id].push(r);
+      if (r.user_email === user.email) mine[r.test_id] = r;
     });
-  }, []);
+    setAllResults(all);
+    setMyResults(mine);
+  }, [user.email]);
 
-  // Group by user
-  const byUser: Record<string, TestResult[]> = {};
-  results.forEach((r) => {
-    const key = r.user_email;
-    if (!byUser[key]) byUser[key] = [];
-    byUser[key].push(r);
-  });
+  useEffect(() => { load(); }, [load]);
+
+  const handleSave = async (testId: string, status: Status, notes: string) => {
+    setSaving(testId);
+    await sb.from("test_results").upsert({ user_name: user.name, user_email: user.email, test_id: testId, status, notes, updated_at: new Date().toISOString() }, { onConflict: "user_email,test_id" });
+    await load();
+    setSaving(null);
+  };
+
+  // Group by section
+  const sections = Array.from(new Set(testCases.map(t => t.section)));
+  const sectionColors: Record<string, string> = {};
+  const palette = ["#0ea5e9","#f59e0b","#8b5cf6","#10b981","#ef4444","#06b6d4","#f97316","#64748b","#ec4899","#a3e635"];
+  sections.forEach((s, i) => { sectionColors[s] = palette[i % palette.length]; });
+
+  const active = testCases.filter(t => t.is_active);
+  const done = active.filter(t => myResults[t.id] && myResults[t.id].status !== "untested").length;
+  const passed = active.filter(t => myResults[t.id]?.status === "pass").length;
+  const failed = active.filter(t => myResults[t.id]?.status === "fail").length;
+  const progress = pct(done, active.length);
+
+  const filtered = active.filter(t =>
+    (filterSection === "All" || t.section === filterSection) &&
+    (filterStatus === "all" || (myResults[t.id]?.status ?? "untested") === filterStatus) &&
+    (filterRole === "all" || (t.roles ?? []).includes(filterRole))
+  );
+
+  const grouped: Record<string, TestCase[]> = {};
+  filtered.forEach(t => { if (!grouped[t.section]) grouped[t.section] = []; grouped[t.section].push(t); });
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0f172a", padding: 24 }}>
-      <div style={{ maxWidth: 860, margin: "0 auto" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
-          <button onClick={onBack} style={{ background: "#1e293b", border: "1px solid #334155", color: "#94a3b8", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13 }}>← Back</button>
-          <h2 style={{ margin: 0, color: "#f1f5f9", fontSize: 20, fontFamily: "'DM Sans', sans-serif" }}>📊 Testing Summary</h2>
-        </div>
+    <div style={{ minHeight: "100vh", background: "#060d1a" }}>
+      <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;900&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
-        {loading ? (
-          <p style={{ color: "#475569", fontFamily: "'DM Sans', sans-serif" }}>Loading results…</p>
-        ) : Object.keys(byUser).length === 0 ? (
-          <p style={{ color: "#475569", fontFamily: "'DM Sans', sans-serif" }}>No results recorded yet.</p>
+      {/* Header */}
+      <div style={{ background: "#0a1628", borderBottom: "1px solid #1e3a5f", padding: "12px 20px", position: "sticky", top: 0, zIndex: 100 }}>
+        <div style={{ maxWidth: 860, margin: "0 auto" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 22 }}>📋</span>
+              <div>
+                <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 900, fontSize: 15, color: "#f1f5f9" }}>QA Checklist</div>
+                <div style={{ fontSize: 11, color: "#334155" }}>Testing as <strong style={{ color: "#7dd3fc" }}>{user.name}</strong></div>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ background: "#14532d", color: "#4ade80", padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700 }}>✓ {passed}</span>
+              <span style={{ background: "#450a0a", color: "#f87171", padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700 }}>✗ {failed}</span>
+              <span style={{ color: "#7dd3fc", fontWeight: 700, fontSize: 12, fontFamily: "monospace" }}>{progress}%</span>
+              <button onClick={onAdmin} style={{ background: "#1e293b", border: "1px solid #334155", color: "#94a3b8", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>📊 Admin</button>
+              <button onClick={onSignOut} style={{ background: "transparent", border: "1px solid #1e3a5f", color: "#334155", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 11 }}>Sign Out</button>
+            </div>
+          </div>
+          {/* Progress bar */}
+          <div style={{ marginTop: 8, height: 3, background: "#0f172a", borderRadius: 999, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${progress}%`, background: progress === 100 ? "#22c55e" : "linear-gradient(90deg,#0ea5e9,#6366f1)", borderRadius: 999, transition: "width .4s" }} />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 860, margin: "0 auto", padding: "20px 16px 48px" }}>
+        {active.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: "#334155" }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>📭</div>
+            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 900, color: "#1e3a5f" }}>No test cases yet</div>
+            <div style={{ fontSize: 13, marginTop: 6 }}>Ask an admin to upload test cases via the Admin panel.</div>
+          </div>
         ) : (
-          Object.entries(byUser).map(([email, rows]) => {
-            const pass = rows.filter((r) => r.status === "pass").length;
-            const fail = rows.filter((r) => r.status === "fail").length;
-            const name = rows[0].user_name;
-            return (
-              <div key={email} style={{ background: "#1e293b", borderRadius: 14, marginBottom: 16, overflow: "hidden", border: "1px solid #334155" }}>
-                <div style={{ padding: "14px 18px", borderBottom: "1px solid #334155", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                  <div>
-                    <div style={{ fontWeight: 700, color: "#f1f5f9", fontSize: 15, fontFamily: "'DM Sans', sans-serif" }}>{name}</div>
-                    <div style={{ fontSize: 12, color: "#475569" }}>{email}</div>
-                  </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <span style={{ background: "#14532d", color: "#4ade80", padding: "3px 12px", borderRadius: 999, fontSize: 12, fontWeight: 700 }}>✓ {pass} PASS</span>
-                    <span style={{ background: "#450a0a", color: "#f87171", padding: "3px 12px", borderRadius: 999, fontSize: 12, fontWeight: 700 }}>✗ {fail} FAIL</span>
-                    <span style={{ background: "#1e293b", color: "#64748b", padding: "3px 12px", borderRadius: 999, fontSize: 12, fontWeight: 700, border: "1px solid #334155" }}>{rows.length} total</span>
-                  </div>
-                </div>
-                <div style={{ padding: "10px 18px 14px" }}>
-                  {rows.filter((r) => r.status !== "untested").map((r) => (
-                    <div key={r.test_id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0", borderBottom: "1px solid #0f172a" }}>
-                      <StatusBadge status={r.status} />
-                      <div style={{ flex: 1 }}>
-                        <span style={{ fontSize: 13, color: "#cbd5e1", fontFamily: "'DM Sans', sans-serif" }}>
-                          {r.test_title}
-                        </span>                        {r.notes && <p style={{ margin: "2px 0 0", fontSize: 11, color: "#475569", fontStyle: "italic", fontFamily: "'DM Sans', sans-serif" }}>{r.notes}</p>}
-                      </div>
-                      <span style={{ fontSize: 11, color: "#334155", flexShrink: 0 }}>{new Date(r.updated_at).toLocaleDateString()}</span>
+          <>
+            {/* Filters */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20 }}>
+              <select value={filterSection} onChange={e => setFilterSection(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #1e3a5f", background: "#0f1a2e", color: "#94a3b8", fontSize: 12, cursor: "pointer", outline: "none" }}>
+                <option value="All">All Sections</option>
+                {sections.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              {(["all","pass","fail","untested"] as const).map(f => (
+                <button key={f} onClick={() => setFilterStatus(f)} style={{ padding: "5px 12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 600, background: filterStatus === f ? (f === "pass" ? "#15803d" : f === "fail" ? "#b91c1c" : f === "untested" ? "#334155" : "linear-gradient(135deg,#0ea5e9,#6366f1)") : "#1e293b", color: filterStatus === f ? "#fff" : "#475569", fontFamily: "monospace" }}>
+                  {f === "all" ? "All" : f.toUpperCase()}
+                </button>
+              ))}
+              {/* Role filter */}
+              <div style={{ width: 1, background: "#1e3a5f", margin: "0 2px" }} />
+              <button onClick={() => setFilterRole("all")} style={{ padding: "5px 12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 600, background: filterRole === "all" ? "#334155" : "#1e293b", color: filterRole === "all" ? "#fff" : "#475569", fontFamily: "monospace" }}>
+                All Roles
+              </button>
+              {ALL_ROLES.map(r => {
+                const c = ROLE_CFG[r];
+                const active = filterRole === r;
+                return (
+                  <button key={r} onClick={() => setFilterRole(r)} style={{ padding: "5px 12px", borderRadius: 8, border: `1px solid ${active ? c.color : "transparent"}`, cursor: "pointer", fontSize: 11, fontWeight: 600, background: active ? c.bg : "#1e293b", color: active ? c.color : "#475569", fontFamily: "monospace" }}>
+                    {c.icon} {r}
+                  </button>
+                );
+              })}
+              <span style={{ marginLeft: "auto", fontSize: 11, color: "#334155", alignSelf: "center" }}>{filtered.length} tests</span>
+            </div>
+
+            {Object.entries(grouped).map(([sec, cases]) => {
+              const col = sectionColors[sec] ?? "#0ea5e9";
+              const sp = cases.filter(c => myResults[c.id]?.status === "pass").length;
+              const sf = cases.filter(c => myResults[c.id]?.status === "fail").length;
+              return (
+                <div key={sec} style={{ marginBottom: 28 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, paddingBottom: 8, borderBottom: `2px solid ${col}22` }}>
+                    <h2 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: col, fontFamily: "'Syne', sans-serif" }}>{sec}</h2>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {sp > 0 && <span style={{ background: "#14532d", color: "#4ade80", padding: "1px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>✓ {sp}</span>}
+                      {sf > 0 && <span style={{ background: "#450a0a", color: "#f87171", padding: "1px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>✗ {sf}</span>}
+                      <span style={{ color: "#1e3a5f", fontSize: 10 }}>{cases.length}</span>
                     </div>
+                  </div>
+                  {cases.map(tc => (
+                    <TestRow key={tc.id} tc={tc} myResult={myResults[tc.id] ?? null} otherResults={(allResults[tc.id] ?? []).filter(r => r.user_email !== user.email)} onSave={handleSave} saving={saving === tc.id} />
                   ))}
                 </div>
-              </div>
-            );
-          })
+              );
+            })}
+          </>
         )}
       </div>
     </div>
   );
 }
 
-// ── Main App ─────────────────────────────────────────────────
+// ─── Root ────────────────────────────────────────────────────
 export default function App() {
+  const [view, setView] = useState<AppView>("login");
   const [user, setUser] = useState<{ name: string; email: string } | null>(null);
-  const [myResults, setMyResults] = useState<Record<string, TestResult>>({});
-  const [allResults, setAllResults] = useState<AllResults>({});
-  const [saving, setSaving] = useState<string | null>(null);
-  const [view, setView] = useState<"checklist" | "admin">("checklist");
+  const [testCases, setTestCases] = useState<TestCase[]>([]);
 
-  // Load results once user is known
-  const loadResults = useCallback(async (email: string) => {
-    const { data: all } = await supabase.from("test_results").select("*");
-    const allMap: AllResults = {};
-    (all ?? []).forEach((r: TestResult) => {
-      if (!allMap[r.test_id]) allMap[r.test_id] = [];
-      allMap[r.test_id].push(r);
-    });
-    setAllResults(allMap);
-
-    const mine: Record<string, TestResult> = {};
-    (all ?? []).filter((r: TestResult) => r.user_email === email).forEach((r: TestResult) => { mine[r.test_id] = r; });
-    setMyResults(mine);
+  const loadCases = useCallback(async () => {
+    const { data } = await sb.from("test_cases").select("*").eq("is_active", true).order("section").order("id");
+    setTestCases((data ?? []) as TestCase[]);
   }, []);
 
   const handleLogin = (name: string, email: string) => {
     setUser({ name, email });
-    loadResults(email);
+    loadCases();
+    setView("checklist");
   };
 
-  const handleSave = async (testId: string, section: string, title: string, status: Status, notes: string) => {
-    if (!user) return;
-    setSaving(testId);
-    await supabase.from("test_results").upsert({
-      user_name: user.name, user_email: user.email,
-      test_id: testId, section, test_title: title,
-      status, notes, updated_at: new Date().toISOString(),
-    }, { onConflict: "user_email,test_id" });
-    await loadResults(user.email);
-    setSaving(null);
-  };
-
-  if (!user) return <LoginScreen onLogin={handleLogin} />;
-  if (view === "admin") return <AdminView onBack={() => setView("checklist")} />;
-
-  // Progress
-  const done = ALL_IDS.filter((id) => myResults[id] && myResults[id].status !== "untested").length;
-  const passed = ALL_IDS.filter((id) => myResults[id]?.status === "pass").length;
-  const failed = ALL_IDS.filter((id) => myResults[id]?.status === "fail").length;
-  const pct = Math.round((done / ALL_IDS.length) * 100);
-
-  return (
-    <div style={{ minHeight: "100vh", background: "#0f172a", fontFamily: "'DM Sans', sans-serif" }}>
-      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-
-      {/* Header */}
-      <div style={{ background: "#1e293b", borderBottom: "1px solid #334155", padding: "16px 24px", position: "sticky", top: 0, zIndex: 100 }}>
-        <div style={{ maxWidth: 860, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontSize: 24 }}>🎓</span>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: "#f1f5f9" }}>Turnitin LTI 1.3 QA</div>
-                <div style={{ fontSize: 12, color: "#475569" }}>Testing as <strong style={{ color: "#7dd3fc" }}>{user.name}</strong></div>
-              </div>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ background: "#14532d", color: "#4ade80", padding: "3px 12px", borderRadius: 999, fontSize: 12, fontWeight: 700 }}>✓ {passed}</span>
-              <span style={{ background: "#450a0a", color: "#f87171", padding: "3px 12px", borderRadius: 999, fontSize: 12, fontWeight: 700 }}>✗ {failed}</span>
-              <span style={{ color: "#7dd3fc", fontWeight: 700, fontSize: 13 }}>{pct}%</span>
-              <button onClick={() => setView("admin")} style={{ background: "#334155", border: "none", color: "#94a3b8", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>📊 All Testers</button>
-              <button onClick={() => setUser(null)} style={{ background: "#1e293b", border: "1px solid #334155", color: "#64748b", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 12 }}>Sign Out</button>
-            </div>
-          </div>
-
-          {/* Progress bar */}
-          <div style={{ marginTop: 10, height: 4, background: "#0f172a", borderRadius: 999, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${pct}%`, background: pct === 100 ? "#22c55e" : "linear-gradient(90deg,#0ea5e9,#38bdf8)", borderRadius: 999, transition: "width 0.4s" }} />
-          </div>
-        </div>
-      </div>
-
-      {/* Body */}
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: "24px 16px 48px" }}>
-        {/* Warn banner */}
-        <div style={{ background: "#431407", border: "1px solid #9a3412", borderRadius: 10, padding: "10px 16px", marginBottom: 24, fontSize: 13, color: "#fdba74" }}>
-          <strong>⚠ Action required:</strong> Please share the TII assignment link where grades appear before the post date — needed for test <strong>grade-1</strong>.
-        </div>
-
-        {CHECKLIST.map((sec) => {
-          const secPass = sec.items.filter((i) => myResults[i.id]?.status === "pass").length;
-          const secFail = sec.items.filter((i) => myResults[i.id]?.status === "fail").length;
-          return (
-            <div key={sec.section} style={{ marginBottom: 28 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, borderBottom: `2px solid ${sec.color}33`, paddingBottom: 8 }}>
-                <h2 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: sec.color, fontFamily: "'DM Sans', sans-serif" }}>
-                  {sec.section}
-                </h2>
-                <div style={{ display: "flex", gap: 6, fontSize: 11 }}>
-                  {secPass > 0 && <span style={{ background: "#14532d", color: "#4ade80", padding: "1px 8px", borderRadius: 999, fontWeight: 700 }}>✓ {secPass}</span>}
-                  {secFail > 0 && <span style={{ background: "#450a0a", color: "#f87171", padding: "1px 8px", borderRadius: 999, fontWeight: 700 }}>✗ {secFail}</span>}
-                  <span style={{ color: "#334155", padding: "1px 8px" }}>{sec.items.length} tests</span>
-                </div>
-              </div>
-              {sec.items.map((item) => (
-                <TestRow
-                  key={item.id}
-                  item={item}
-                  section={sec.section}
-                  color={sec.color}
-                  myResult={myResults[item.id] ?? null}
-                  allResults={allResults[item.id] ?? []}
-                  onSave={handleSave}
-                  saving={saving === item.id}
-                />
-              ))}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
+  if (view === "login") return <LoginScreen onLogin={handleLogin} />;
+  if (view === "admin") return <AdminView onBack={() => setView("checklist")} testCases={testCases} onCasesReloaded={loadCases} />;
+  return <ChecklistView user={user!} testCases={testCases} onAdmin={() => setView("admin")} onSignOut={() => { setUser(null); setView("login"); }} />;
 }
