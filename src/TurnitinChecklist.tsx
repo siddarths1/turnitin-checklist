@@ -30,7 +30,7 @@ const ALL_ROLES: Role[] = ["Student", "Teacher", "Admin"];
 const ROLE_CFG: Record<Role, { color: string; bg: string; icon: string }> = {
   Student: { color: "#38bdf8", bg: "#0c2a3f", icon: "🎓" },
   Teacher: { color: "#a78bfa", bg: "#1e1040", icon: "📖" },
-  Admin:   { color: "#fb923c", bg: "#2d1506", icon: "🔧" },
+  Admin: { color: "#fb923c", bg: "#2d1506", icon: "🔧" },
 };
 
 interface TestCase {
@@ -81,15 +81,15 @@ interface TestCoverage {
 // ─── Constants ───────────────────────────────────────────────
 const PRIORITY_CFG: Record<Priority, { color: string; bg: string }> = {
   Critical: { color: "#ef4444", bg: "#450a0a" },
-  High:     { color: "#f97316", bg: "#431407" },
-  Medium:   { color: "#eab308", bg: "#422006" },
-  Low:      { color: "#22c55e", bg: "#052e16" },
+  High: { color: "#f97316", bg: "#431407" },
+  Medium: { color: "#eab308", bg: "#422006" },
+  Low: { color: "#22c55e", bg: "#052e16" },
 };
 
 const STATUS_CFG = {
-  pass:     { color: "#4ade80", bg: "#14532d", label: "PASS",    icon: "✓" },
-  fail:     { color: "#f87171", bg: "#450a0a", label: "FAIL",    icon: "✗" },
-  untested: { color: "#64748b", bg: "#1e293b", label: "UNTESTED",icon: "–" },
+  pass: { color: "#4ade80", bg: "#14532d", label: "PASS", icon: "✓" },
+  fail: { color: "#f87171", bg: "#450a0a", label: "FAIL", icon: "✗" },
+  untested: { color: "#64748b", bg: "#1e293b", label: "UNTESTED", icon: "–" },
 };
 
 // ─── Tiny helpers ────────────────────────────────────────────
@@ -243,7 +243,7 @@ function AdminView({
           title: String(r.title ?? "").trim(),
           procedure: String(r.procedure ?? "").trim(),
           expected_result: String(r.expected_result ?? "").trim(),
-          priority: (["Critical","High","Medium","Low"].includes(r.priority) ? r.priority : "Medium") as Priority,
+          priority: (["Critical", "High", "Medium", "Low"].includes(r.priority) ? r.priority : "Medium") as Priority,
           link_required: String(r.link_required ?? "").toUpperCase() === "TRUE",
           roles: parsedRoles,
           is_active: true,
@@ -283,8 +283,8 @@ function AdminView({
 
   const TABS = [
     { key: "analytics", label: "📊 Analytics" },
-    { key: "coverage",  label: "🗂 Coverage" },
-    { key: "upload",    label: "📤 Upload Cases" },
+    { key: "coverage", label: "🗂 Coverage" },
+    { key: "upload", label: "📤 Upload Cases" },
   ] as const;
 
   return (
@@ -342,7 +342,7 @@ function AdminView({
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                       <tr style={{ background: "#0a1628" }}>
-                        {["Tester","Email","Pass","Fail","Tested","Pass Rate","Progress","Last Active"].map(h => (
+                        {["Tester", "Email", "Pass", "Fail", "Tested", "Pass Rate", "Progress", "Last Active"].map(h => (
                           <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 10, color: "#475569", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" }}>{h}</th>
                         ))}
                       </tr>
@@ -382,7 +382,7 @@ function AdminView({
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: "#0a1628" }}>
-                    {["ID","Section","Title","Priority","Roles","✓ Pass","✗ Fail","Testers","Tested By"].map(h => (
+                    {["ID", "Section", "Title", "Priority", "Roles", "✓ Pass", "✗ Fail", "Testers", "Tested By"].map(h => (
                       <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 10, color: "#475569", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
@@ -419,14 +419,14 @@ function AdminView({
               <h3 style={{ margin: "0 0 8px", fontSize: 14, color: "#f1f5f9" }}>📄 xlsx Column Headers</h3>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
                 {[
-                  ["id","Unique key, e.g. lti-1"],
-                  ["section","Group / category"],
-                  ["title","Short test name"],
-                  ["procedure","Testing steps"],
-                  ["expected_result","What should happen"],
-                  ["priority","Critical/High/Medium/Low"],
-                  ["link_required","TRUE or FALSE"],
-                  ["roles","Comma-separated: Student, Teacher, Admin"],
+                  ["id", "Unique key, e.g. lti-1"],
+                  ["section", "Group / category"],
+                  ["title", "Short test name"],
+                  ["procedure", "Testing steps"],
+                  ["expected_result", "What should happen"],
+                  ["priority", "Critical/High/Medium/Low"],
+                  ["link_required", "TRUE or FALSE"],
+                  ["roles", "Comma-separated: Student, Teacher, Admin"],
                 ].map(([col, desc]) => (
                   <div key={col} style={{ background: "#0a1628", borderRadius: 8, padding: "8px 12px" }}>
                     <div style={{ fontSize: 11, fontFamily: "monospace", color: "#0ea5e9", fontWeight: 700 }}>{col}</div>
@@ -468,7 +468,7 @@ function AdminView({
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead style={{ position: "sticky", top: 0, background: "#0a1628" }}>
                       <tr>
-                        {["ID","Section","Title","Priority","Roles","Link?"].map(h => (
+                        {["ID", "Section", "Title", "Priority", "Roles", "Link?"].map(h => (
                           <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, color: "#475569", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>{h}</th>
                         ))}
                       </tr>
@@ -507,7 +507,7 @@ function TestRow({
   tc: TestCase;
   myResult: TestResult | null;
   otherResults: TestResult[];
-  onSave: (testId: string, status: Status, notes: string) => void;
+  onSave: (testId: string, section: string, title: string, status: Status, notes: string) => void;
   saving: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -570,18 +570,18 @@ function TestRow({
               {!editingRoles
                 ? <button onClick={() => setEditingRoles(true)} style={{ fontSize: 10, color: "#475569", background: "transparent", border: "1px solid #1e3a5f", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>Edit</button>
                 : <div style={{ display: "flex", gap: 6 }}>
-                    <button onClick={saveRoles} disabled={rolesSaving} style={{ fontSize: 10, color: "#4ade80", background: "#14532d", border: "none", borderRadius: 6, padding: "2px 10px", cursor: "pointer", fontWeight: 700 }}>{rolesSaving ? "…" : "Save"}</button>
-                    <button onClick={() => { setLocalRoles(tc.roles ?? []); setEditingRoles(false); }} style={{ fontSize: 10, color: "#475569", background: "transparent", border: "1px solid #1e3a5f", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>Cancel</button>
-                  </div>
+                  <button onClick={saveRoles} disabled={rolesSaving} style={{ fontSize: 10, color: "#4ade80", background: "#14532d", border: "none", borderRadius: 6, padding: "2px 10px", cursor: "pointer", fontWeight: 700 }}>{rolesSaving ? "…" : "Save"}</button>
+                  <button onClick={() => { setLocalRoles(tc.roles ?? []); setEditingRoles(false); }} style={{ fontSize: 10, color: "#475569", background: "transparent", border: "1px solid #1e3a5f", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>Cancel</button>
+                </div>
               }
             </div>
             {editingRoles
               ? <RoleToggle value={localRoles} onChange={setLocalRoles} />
               : <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                  {localRoles.length
-                    ? localRoles.map(r => <RoleBadge key={r} role={r} />)
-                    : <span style={{ fontSize: 11, color: "#334155", fontStyle: "italic" }}>No roles assigned — click Edit</span>}
-                </div>
+                {localRoles.length
+                  ? localRoles.map(r => <RoleBadge key={r} role={r} />)
+                  : <span style={{ fontSize: 11, color: "#334155", fontStyle: "italic" }}>No roles assigned — click Edit</span>}
+              </div>
             }
           </div>
 
@@ -612,7 +612,7 @@ function TestRow({
               ))}
             </div>
             <textarea value={notes} onChange={e => { setNotes(e.target.value); setDirty(true); }} placeholder="Notes, observations, bug details…" rows={2} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #1e3a5f", background: "#0f1a2e", color: "#f1f5f9", fontSize: 12, fontFamily: "'DM Sans', sans-serif", resize: "vertical", outline: "none", boxSizing: "border-box" }} />
-            <button onClick={() => { onSave(tc.id, status, notes); setDirty(false); }} disabled={saving || (!dirty && !!myResult)} style={{ marginTop: 8, padding: "7px 18px", borderRadius: 8, border: "none", cursor: dirty || !myResult ? "pointer" : "default", background: dirty || !myResult ? "linear-gradient(135deg,#0ea5e9,#6366f1)" : "#1e293b", color: dirty || !myResult ? "#fff" : "#334155", fontWeight: 700, fontSize: 11, fontFamily: "monospace", transition: "all .15s" }}>
+            <button onClick={() => { onSave(tc.id, tc.section, tc.title, status, notes); setDirty(false); }} disabled={saving || (!dirty && !!myResult)} style={{ marginTop: 8, padding: "7px 18px", borderRadius: 8, border: "none", cursor: dirty || !myResult ? "pointer" : "default", background: dirty || !myResult ? "linear-gradient(135deg,#0ea5e9,#6366f1)" : "#1e293b", color: dirty || !myResult ? "#fff" : "#334155", fontWeight: 700, fontSize: 11, fontFamily: "monospace", transition: "all .15s" }}>
               {saving ? "Saving…" : myResult && !dirty ? "✓ Saved" : "Save Result"}
             </button>
           </div>
@@ -638,8 +638,16 @@ function ChecklistView({
   const [filterStatus, setFilterStatus] = useState<"all" | Status>("all");
   const [filterRole, setFilterRole] = useState<Role | "all">("all");
 
+  const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
+
+  const showToast = (msg: string, type: "success" | "error") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3500);
+  };
+
   const load = useCallback(async () => {
-    const { data } = await sb.from("test_results").select("*");
+    const { data, error } = await sb.from("test_results").select("*");
+    if (error) { console.error("Load error:", error); return; }
     const all: Record<string, TestResult[]> = {};
     const mine: Record<string, TestResult> = {};
     (data ?? []).forEach((r: TestResult) => {
@@ -653,17 +661,26 @@ function ChecklistView({
 
   useEffect(() => { load(); }, [load]);
 
-  const handleSave = async (testId: string, status: Status, notes: string) => {
+  const handleSave = async (testId: string, section: string, title: string, status: Status, notes: string) => {
     setSaving(testId);
-    await sb.from("test_results").upsert({ user_name: user.name, user_email: user.email, test_id: testId, status, notes, updated_at: new Date().toISOString() }, { onConflict: "user_email,test_id" });
-    await load();
+    const { error } = await sb.from("test_results").upsert(
+      { user_name: user.name, user_email: user.email, test_id: testId, section, test_title: title, status, notes, updated_at: new Date().toISOString() },
+      { onConflict: "user_email,test_id" }
+    );
+    if (error) {
+      console.error("Save error:", error);
+      showToast("❌ Save failed: " + error.message, "error");
+    } else {
+      showToast("✓ Result saved!", "success");
+      await load();
+    }
     setSaving(null);
   };
 
   // Group by section
   const sections = Array.from(new Set(testCases.map(t => t.section)));
   const sectionColors: Record<string, string> = {};
-  const palette = ["#0ea5e9","#f59e0b","#8b5cf6","#10b981","#ef4444","#06b6d4","#f97316","#64748b","#ec4899","#a3e635"];
+  const palette = ["#0ea5e9", "#f59e0b", "#8b5cf6", "#10b981", "#ef4444", "#06b6d4", "#f97316", "#64748b", "#ec4899", "#a3e635"];
   sections.forEach((s, i) => { sectionColors[s] = palette[i % palette.length]; });
 
   const active = testCases.filter(t => t.is_active);
@@ -684,6 +701,13 @@ function ChecklistView({
   return (
     <div style={{ minHeight: "100vh", background: "#060d1a" }}>
       <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;900&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+      {/* Toast notification */}
+      {toast && (
+        <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 9999, background: toast.type === "success" ? "#14532d" : "#450a0a", border: `1px solid ${toast.type === "success" ? "#22c55e" : "#ef4444"}`, color: toast.type === "success" ? "#4ade80" : "#f87171", padding: "12px 20px", borderRadius: 10, fontSize: 13, fontWeight: 700, fontFamily: "monospace", boxShadow: "0 8px 30px rgba(0,0,0,0.4)", transition: "all .3s" }}>
+          {toast.msg}
+        </div>
+      )}
 
       {/* Header */}
       <div style={{ background: "#0a1628", borderBottom: "1px solid #1e3a5f", padding: "12px 20px", position: "sticky", top: 0, zIndex: 100 }}>
@@ -726,7 +750,7 @@ function ChecklistView({
                 <option value="All">All Sections</option>
                 {sections.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-              {(["all","pass","fail","untested"] as const).map(f => (
+              {(["all", "pass", "fail", "untested"] as const).map(f => (
                 <button key={f} onClick={() => setFilterStatus(f)} style={{ padding: "5px 12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 600, background: filterStatus === f ? (f === "pass" ? "#15803d" : f === "fail" ? "#b91c1c" : f === "untested" ? "#334155" : "linear-gradient(135deg,#0ea5e9,#6366f1)") : "#1e293b", color: filterStatus === f ? "#fff" : "#475569", fontFamily: "monospace" }}>
                   {f === "all" ? "All" : f.toUpperCase()}
                 </button>
@@ -776,9 +800,16 @@ function ChecklistView({
 }
 
 // ─── Root ────────────────────────────────────────────────────
+const SESSION_KEY = "qa_checklist_user";
+
 export default function App() {
-  const [view, setView] = useState<AppView>("login");
-  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
+  // Rehydrate from localStorage immediately so returning users skip login
+  const savedSession = (() => {
+    try { return JSON.parse(localStorage.getItem(SESSION_KEY) ?? "null"); } catch { return null; }
+  })();
+
+  const [user, setUser] = useState<{ name: string; email: string } | null>(savedSession);
+  const [view, setView] = useState<AppView>(savedSession ? "checklist" : "login");
   const [testCases, setTestCases] = useState<TestCase[]>([]);
 
   const loadCases = useCallback(async () => {
@@ -786,13 +817,25 @@ export default function App() {
     setTestCases((data ?? []) as TestCase[]);
   }, []);
 
+  // Load test cases whenever we have a user
+  useEffect(() => {
+    if (user) loadCases();
+  }, [user, loadCases]);
+
   const handleLogin = (name: string, email: string) => {
-    setUser({ name, email });
-    loadCases();
+    const session = { name, email };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session)); // persist
+    setUser(session);
     setView("checklist");
+  };
+
+  const handleSignOut = () => {
+    localStorage.removeItem(SESSION_KEY); // clear
+    setUser(null);
+    setView("login");
   };
 
   if (view === "login") return <LoginScreen onLogin={handleLogin} />;
   if (view === "admin") return <AdminView onBack={() => setView("checklist")} testCases={testCases} onCasesReloaded={loadCases} />;
-  return <ChecklistView user={user!} testCases={testCases} onAdmin={() => setView("admin")} onSignOut={() => { setUser(null); setView("login"); }} />;
+  return <ChecklistView user={user!} testCases={testCases} onAdmin={() => setView("admin")} onSignOut={handleSignOut} />;
 }
