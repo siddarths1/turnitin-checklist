@@ -194,6 +194,30 @@ function LoginScreen({ onLogin }: { onLogin: (n: string, e: string) => void }) {
   );
 }
 
+// ─── Admin Delete Cell (Coverage table) ─────────────────────
+function AdminDeleteCell({ testId, onDeleted }: { testId: string; onDeleted: () => void }) {
+  const [confirm, setConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const doDelete = async () => {
+    setDeleting(true);
+    await sb.from("test_cases").update({ is_active: false }).eq("id", testId);
+    setDeleting(false);
+    onDeleted();
+  };
+
+  if (!confirm) return (
+    <button onClick={() => setConfirm(true)} style={{ fontSize: 10, color: "#475569", background: "transparent", border: "1px solid #1e3a5f", borderRadius: 6, padding: "3px 8px", cursor: "pointer" }} title="Hide test case">🗑 Hide</button>
+  );
+  return (
+    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+      <span style={{ fontSize: 10, color: "#f87171", fontFamily: "monospace" }}>Sure?</span>
+      <button onClick={doDelete} disabled={deleting} style={{ fontSize: 10, color: "#fff", background: "#b91c1c", border: "none", borderRadius: 6, padding: "3px 8px", cursor: "pointer", fontWeight: 700 }}>{deleting ? "…" : "Yes"}</button>
+      <button onClick={() => setConfirm(false)} style={{ fontSize: 10, color: "#475569", background: "transparent", border: "1px solid #1e3a5f", borderRadius: 6, padding: "3px 6px", cursor: "pointer" }}>No</button>
+    </div>
+  );
+}
+
 // ─── Admin view ──────────────────────────────────────────────
 function AdminView({
   onBack, testCases, onCasesReloaded,
@@ -382,7 +406,7 @@ function AdminView({
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: "#0a1628" }}>
-                    {["ID", "Section", "Title", "Priority", "Roles", "✓ Pass", "✗ Fail", "Testers", "Tested By"].map(h => (
+                    {["ID", "Section", "Title", "Priority", "Roles", "✓ Pass", "✗ Fail", "Testers", "Tested By", ""].map(h => (
                       <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 10, color: "#475569", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
@@ -403,6 +427,9 @@ function AdminView({
                       <td style={{ padding: "10px 14px", color: "#f87171", fontWeight: 700, fontSize: 13 }}>{c.fail_count}</td>
                       <td style={{ padding: "10px 14px", fontSize: 12, color: "#94a3b8" }}>{c.tester_count}</td>
                       <td style={{ padding: "10px 14px", fontSize: 11, color: "#475569", maxWidth: 200, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.testers ?? "—"}</td>
+                      <td style={{ padding: "10px 14px" }}>
+                        <AdminDeleteCell testId={c.id} onDeleted={() => { setCoverage(prev => prev.filter(x => x.id !== c.id)); }} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -502,34 +529,62 @@ function AdminView({
 
 // ─── Test row ────────────────────────────────────────────────
 function TestRow({
-  tc, myResult, otherResults, onSave, saving,
+  tc, myResult, otherResults, onSave, saving, onSoftDelete,
 }: {
   tc: TestCase;
   myResult: TestResult | null;
   otherResults: TestResult[];
   onSave: (testId: string, section: string, title: string, status: Status, notes: string) => void;
   saving: boolean;
+  onSoftDelete: (testId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<Status>(myResult?.status ?? "untested");
   const [notes, setNotes] = useState(myResult?.notes ?? "");
   const [dirty, setDirty] = useState(false);
-  const [editingRoles, setEditingRoles] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [localRoles, setLocalRoles] = useState<Role[]>(tc.roles ?? []);
-  const [rolesSaving, setRolesSaving] = useState(false);
+  const [localProcedure, setLocalProcedure] = useState(tc.procedure ?? "");
+  const [localExpected, setLocalExpected] = useState(tc.expected_result ?? "");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editMsg, setEditMsg] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     if (myResult) { setStatus(myResult.status); setNotes(myResult.notes ?? ""); setDirty(false); }
   }, [myResult]);
 
-  useEffect(() => { setLocalRoles(tc.roles ?? []); }, [tc.roles]);
+  useEffect(() => {
+    setLocalRoles(tc.roles ?? []);
+    setLocalProcedure(tc.procedure ?? "");
+    setLocalExpected(tc.expected_result ?? "");
+  }, [tc]);
 
-  const saveRoles = async () => {
-    setRolesSaving(true);
-    await sb.from("test_cases").update({ roles: localRoles }).eq("id", tc.id);
-    tc.roles = localRoles; // optimistic local update
-    setEditingRoles(false);
-    setRolesSaving(false);
+  const saveEdit = async () => {
+    setEditSaving(true);
+    setEditMsg("");
+    // 1. Update test case fields
+    const { error: tcErr } = await sb.from("test_cases").update({
+      roles: localRoles,
+      procedure: localProcedure,
+      expected_result: localExpected,
+    }).eq("id", tc.id);
+    if (tcErr) { setEditMsg("❌ " + tcErr.message); setEditSaving(false); return; }
+    // 2. Reset ALL results for this test case to untested
+    const { error: resErr } = await sb.from("test_results")
+      .update({ status: "untested", notes: "", updated_at: new Date().toISOString() })
+      .eq("test_id", tc.id);
+    if (resErr) { setEditMsg("❌ Reset failed: " + resErr.message); setEditSaving(false); return; }
+    // 3. Optimistic local update
+    tc.roles = localRoles;
+    tc.procedure = localProcedure;
+    tc.expected_result = localExpected;
+    setStatus("untested");
+    setNotes("");
+    setDirty(false);
+    setEditing(false);
+    setEditMsg("");
+    setEditSaving(false);
   };
 
   const others = otherResults.filter(r => r.status !== "untested");
@@ -549,13 +604,22 @@ function TestRow({
         <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#e2e8f0", fontFamily: "'DM Sans', sans-serif" }}>{tc.title}</span>
         {tc.link_required && <span style={{ fontSize: 10, background: "#431407", color: "#fb923c", padding: "2px 7px", borderRadius: 999, fontWeight: 700, flexShrink: 0 }}>⚠ LINK</span>}
         {others.length > 0 && <span style={{ fontSize: 11, color: "#334155", flexShrink: 0 }}>{others.length} tester{others.length > 1 ? "s" : ""}</span>}
+        {/* Soft delete button */}
+        {!confirmDelete
+          ? <button onClick={e => { e.stopPropagation(); setConfirmDelete(true); }} style={{ fontSize: 10, color: "#475569", background: "transparent", border: "1px solid #1e3a5f", borderRadius: 6, padding: "2px 8px", cursor: "pointer", flexShrink: 0 }} title="Hide this test case">🗑</button>
+          : <div style={{ display: "flex", gap: 4, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+            <span style={{ fontSize: 10, color: "#f87171", fontFamily: "monospace", alignSelf: "center" }}>Hide?</span>
+            <button onClick={() => onSoftDelete(tc.id)} style={{ fontSize: 10, color: "#fff", background: "#b91c1c", border: "none", borderRadius: 6, padding: "2px 8px", cursor: "pointer", fontWeight: 700 }}>Yes</button>
+            <button onClick={() => setConfirmDelete(false)} style={{ fontSize: 10, color: "#475569", background: "transparent", border: "1px solid #1e3a5f", borderRadius: 6, padding: "2px 6px", cursor: "pointer" }}>No</button>
+          </div>
+        }
         <span style={{ color: "#334155", fontSize: 14, transform: open ? "rotate(180deg)" : "none", transition: "transform .2s", flexShrink: 0 }}>▾</span>
       </div>
 
       {open && (
         <div style={{ padding: "0 14px 16px", borderTop: "1px solid #1e3a5f" }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, margin: "12px 0" }}>
-            {[["📋 Procedure", tc.procedure], ["✅ Expected", tc.expected_result]].map(([label, text]) => (
+            {[["📋 Procedure", localProcedure], ["✅ Expected", localExpected]].map(([label, text]) => (
               <div key={label as string}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: label?.includes("Procedure") ? "#0ea5e9" : "#22c55e", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>{label}</div>
                 <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.6, fontFamily: "'DM Sans', sans-serif" }}>{text || "—"}</p>
@@ -563,26 +627,53 @@ function TestRow({
             ))}
           </div>
 
-          {/* Role labels + inline editor */}
-          <div style={{ background: "#060d1a", borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#334155", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em" }}>👤 Applies To</div>
-              {!editingRoles
-                ? <button onClick={() => setEditingRoles(true)} style={{ fontSize: 10, color: "#475569", background: "transparent", border: "1px solid #1e3a5f", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>Edit</button>
-                : <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={saveRoles} disabled={rolesSaving} style={{ fontSize: 10, color: "#4ade80", background: "#14532d", border: "none", borderRadius: 6, padding: "2px 10px", cursor: "pointer", fontWeight: 700 }}>{rolesSaving ? "…" : "Save"}</button>
-                  <button onClick={() => { setLocalRoles(tc.roles ?? []); setEditingRoles(false); }} style={{ fontSize: 10, color: "#475569", background: "transparent", border: "1px solid #1e3a5f", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>Cancel</button>
+          {/* ── Test Case Editor ── */}
+          <div style={{ background: "#060d1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: "12px", marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: editing ? 14 : 6 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#475569", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em" }}>✏️ Test Case Details</div>
+              {!editing
+                ? <button onClick={() => setEditing(true)} style={{ fontSize: 10, color: "#7dd3fc", background: "#0c2a3f", border: "1px solid #1e3a5f", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontWeight: 700 }}>Edit</button>
+                : <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {editMsg && <span style={{ fontSize: 10, color: "#f87171", fontFamily: "monospace" }}>{editMsg}</span>}
+                  <button onClick={saveEdit} disabled={editSaving} style={{ fontSize: 10, color: "#fff", background: "linear-gradient(135deg,#0ea5e9,#6366f1)", border: "none", borderRadius: 6, padding: "3px 12px", cursor: "pointer", fontWeight: 700 }}>
+                    {editSaving ? "Saving…" : "✓ Save & Reset Results"}
+                  </button>
+                  <button onClick={() => { setLocalRoles(tc.roles ?? []); setLocalProcedure(tc.procedure ?? ""); setLocalExpected(tc.expected_result ?? ""); setEditing(false); setEditMsg(""); }} style={{ fontSize: 10, color: "#475569", background: "transparent", border: "1px solid #1e3a5f", borderRadius: 6, padding: "3px 8px", cursor: "pointer" }}>Cancel</button>
                 </div>
               }
             </div>
-            {editingRoles
-              ? <RoleToggle value={localRoles} onChange={setLocalRoles} />
-              : <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                {localRoles.length
-                  ? localRoles.map(r => <RoleBadge key={r} role={r} />)
-                  : <span style={{ fontSize: 11, color: "#334155", fontStyle: "italic" }}>No roles assigned — click Edit</span>}
+
+            {editing ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {/* Roles */}
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#38bdf8", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 }}>👤 Applies To</div>
+                  <RoleToggle value={localRoles} onChange={setLocalRoles} />
+                </div>
+                {/* Procedure */}
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#0ea5e9", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 }}>📋 Procedure</div>
+                  <textarea value={localProcedure} onChange={e => setLocalProcedure(e.target.value)} rows={3} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #1e3a5f", background: "#0f1a2e", color: "#f1f5f9", fontSize: 12, fontFamily: "'DM Sans', sans-serif", resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+                </div>
+                {/* Expected Result */}
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 }}>✅ Expected Result</div>
+                  <textarea value={localExpected} onChange={e => setLocalExpected(e.target.value)} rows={2} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #1e3a5f", background: "#0f1a2e", color: "#f1f5f9", fontSize: 12, fontFamily: "'DM Sans', sans-serif", resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <div style={{ background: "#1a0f00", border: "1px solid #92400e", borderRadius: 7, padding: "7px 10px", fontSize: 11, color: "#fbbf24", fontFamily: "'DM Sans', sans-serif" }}>
+                  ⚠ Saving will reset <strong>all testers' results</strong> for this test case to Untested.
+                </div>
               </div>
-            }
+            ) : (
+              /* Read-only view */
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                  {localRoles.length
+                    ? localRoles.map(r => <RoleBadge key={r} role={r} />)
+                    : <span style={{ fontSize: 11, color: "#334155", fontStyle: "italic" }}>No roles assigned</span>}
+                </div>
+              </div>
+            )}
           </div>
 
           {others.length > 0 && (
@@ -624,12 +715,13 @@ function TestRow({
 
 // ─── Checklist view ──────────────────────────────────────────
 function ChecklistView({
-  user, testCases, onAdmin, onSignOut,
+  user, testCases, onAdmin, onSignOut, loadCases,
 }: {
   user: { name: string; email: string };
   testCases: TestCase[];
   onAdmin: () => void;
   onSignOut: () => void;
+  loadCases: () => void;
 }) {
   const [myResults, setMyResults] = useState<Record<string, TestResult>>({});
   const [allResults, setAllResults] = useState<Record<string, TestResult[]>>({});
@@ -660,6 +752,11 @@ function ChecklistView({
   }, [user.email]);
 
   useEffect(() => { load(); }, [load]);
+
+  const handleSoftDelete = async (testId: string) => {
+    await sb.from("test_cases").update({ is_active: false }).eq("id", testId);
+    loadCases();
+  };
 
   const handleSave = async (testId: string, section: string, title: string, status: Status, notes: string) => {
     setSaving(testId);
@@ -787,7 +884,7 @@ function ChecklistView({
                     </div>
                   </div>
                   {cases.map(tc => (
-                    <TestRow key={tc.id} tc={tc} myResult={myResults[tc.id] ?? null} otherResults={(allResults[tc.id] ?? []).filter(r => r.user_email !== user.email)} onSave={handleSave} saving={saving === tc.id} />
+                    <TestRow key={tc.id} tc={tc} myResult={myResults[tc.id] ?? null} otherResults={(allResults[tc.id] ?? []).filter(r => r.user_email !== user.email)} onSave={handleSave} saving={saving === tc.id} onSoftDelete={handleSoftDelete} />
                   ))}
                 </div>
               );
@@ -817,15 +914,17 @@ export default function App() {
     setTestCases((data ?? []) as TestCase[]);
   }, []);
 
-  // Load test cases whenever we have a user
+  // If session was restored from localStorage, load cases once on mount
   useEffect(() => {
-    if (user) loadCases();
-  }, [user, loadCases]);
+    if (savedSession) loadCases();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleLogin = (name: string, email: string) => {
     const session = { name, email };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session)); // persist
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
     setUser(session);
+    loadCases(); // called directly, not inside an effect
     setView("checklist");
   };
 
@@ -837,5 +936,5 @@ export default function App() {
 
   if (view === "login") return <LoginScreen onLogin={handleLogin} />;
   if (view === "admin") return <AdminView onBack={() => setView("checklist")} testCases={testCases} onCasesReloaded={loadCases} />;
-  return <ChecklistView user={user!} testCases={testCases} onAdmin={() => setView("admin")} onSignOut={handleSignOut} />;
+  return <ChecklistView user={user!} testCases={testCases} onAdmin={() => setView("admin")} onSignOut={handleSignOut} loadCases={loadCases} />;
 }
